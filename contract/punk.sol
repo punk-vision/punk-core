@@ -1,11 +1,13 @@
-pragma solidity >=0.4.23 <0.6.0;
+pragma solidity >=0.4.23 <0.6.12;
+
+import "./openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IToken {
-    function transfer(address _to, uint256 _value) external;
-    function transferFrom(address _from, address _to, uint256 _value) external;
+    function transfer(address _to, uint256 _value) external returns (bool);
+    function transferFrom(address _from, address _to, uint256 _value) external returns (bool);
 }
 
-contract Punk {
+contract Punk is ReentrancyGuard{
 	struct User {
 		uint256 id;
 		uint256 balance;
@@ -50,6 +52,9 @@ contract Punk {
 
 
 	constructor(address ownerAddress, address punkAddr) public {
+		require(ownerAddress != address(0), "owner can't be null");
+		require(punkAddr != address(0), "punk can't be null");
+
 		owner = ownerAddress;
 		rewards = 15000 * (10 ** punkDecimals);
 		punkToken = IToken(punkAddr);
@@ -62,6 +67,7 @@ contract Punk {
 	}
 
 	function setOwner(address ownerAddress) public onlyOwner {
+		require(ownerAddress != address(0), "owner can't be null");
 		owner = ownerAddress;
 	}
 
@@ -101,11 +107,11 @@ contract Punk {
 		weights += weight;
 	}
 
-	function stake(uint256 id, uint256 amount) external {
+	function stake(uint256 id, uint256 amount) external nonReentrant {
 		require(amount > 0, "amount can't be smaller than 0");
 		require(tokens[id].id != 0, "token not exists");
 
-		tokens[id].token.transferFrom(msg.sender, address(this), amount);
+		require(tokens[id].token.transferFrom(msg.sender, address(this), amount), "transferFrom failed");
 
 		if(tokens[id].users[msg.sender].id != 0) {   // user exists
 			tokens[id].users[msg.sender].lpBalance += (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals)); 
@@ -129,13 +135,13 @@ contract Punk {
 		stakingTimes++;
 	}
 
-	function withdraw(uint256 id, uint256 amount) external {
+	function withdraw(uint256 id, uint256 amount) external nonReentrant {
 		require(amount > 0, "amount can't be smaller than 0");
 		require(tokens[id].id != 0, "token not exists");
 		require(tokens[id].users[msg.sender].id != 0, "user not exists");
 		require(tokens[id].users[msg.sender].balance > amount, "balance not enough");
 
-		tokens[id].token.transfer(msg.sender, amount);
+		require(tokens[id].token.transfer(msg.sender, amount), "transfer failed");
 
 		tokens[id].users[msg.sender].lpBalance += (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals));
 		tokens[id].users[msg.sender].balance -= amount;
@@ -146,7 +152,7 @@ contract Punk {
 		tokens[id].balance -= amount;
 	}
 
-	function withdrawPunk(uint256 id) external {
+	function withdrawPunk(uint256 id) external nonReentrant {
 		require(tokens[id].id != 0, "token not exists");
 		require(tokens[id].users[msg.sender].id != 0, "user not exists");
 		require(now - createTime < 4 * 12 * 30 * oneDay, "only mined by 4 years");
@@ -164,7 +170,7 @@ contract Punk {
 
 		uint256 amount = tokens[id].punkBalance * tokens[id].users[msg.sender].lpBalance / tokens[id].lpBalance;
 
-		punkToken.transfer(msg.sender, amount);
+		require(punkToken.transfer(msg.sender, amount), "transfer failed");
 
 		tokens[id].punkBalance -= amount;
 		tokens[id].lpBalance -= tokens[id].users[msg.sender].lpBalance;
