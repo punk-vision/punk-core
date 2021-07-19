@@ -37,7 +37,7 @@ contract TokenERC20 {
         balanceOf[_from] -= _value;
         balanceOf[_to] += _value;
         Transfer(_from, _to, _value);
-        assert(balanceOf[_from] + balanceOf[_to] == previousBalances);
+        require(balanceOf[_from] + balanceOf[_to] == previousBalances);
 		return true;
     }
 
@@ -46,7 +46,7 @@ contract TokenERC20 {
 		return true;
     }
 
-    function transferFrom(address _from, address _to, uint256 _value) public returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _value) public returns (bool) {
         require(_value <= allowance[_from][msg.sender]);     // Check allowance
         allowance[_from][msg.sender] -= _value;
         _transfer(_from, _to, _value);
@@ -54,14 +54,14 @@ contract TokenERC20 {
     }
 
     function approve(address _spender, uint256 _value) public
-        returns (bool success) {
+        returns (bool) {
 		require((_value == 0) || (allowance[msg.sender][_spender] == 0));
         allowance[msg.sender][_spender] = _value;
 		Approval(msg.sender, _spender, _value);
         return true;
     }
 
-    function approveAndCall(address _spender, uint256 _value, bytes _extraData) public returns (bool success) {
+    function approveAndCall(address _spender, uint256 _value, bytes _extraData) public returns (bool ) {
         tokenRecipient spender = tokenRecipient(_spender);
         if (approve(_spender, _value)) {
             spender.receiveApproval(msg.sender, _value, this, _extraData);
@@ -69,7 +69,7 @@ contract TokenERC20 {
         }
     }
 
-    function burn(uint256 _value) public returns (bool success) {
+    function burn(uint256 _value) public returns (bool ) {
         require(balanceOf[msg.sender] >= _value);
         balanceOf[msg.sender] -= _value;
         totalSupply -= _value;
@@ -77,7 +77,7 @@ contract TokenERC20 {
         return true;
     }
 
-    function burnFrom(address _from, uint256 _value) public returns (bool success) {
+    function burnFrom(address _from, uint256 _value) public returns (bool ) {
         require(balanceOf[_from] >= _value);
         require(_value <= allowance[_from][msg.sender]);
         balanceOf[_from] -= _value;

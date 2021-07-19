@@ -1,6 +1,7 @@
-pragma solidity >=0.4.23 <0.6.12;
+pragma solidity ^0.6.11;
 
 import "./openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./openzeppelin/contracts/math/SafeMath.sol";
 
 interface IToken {
     function transfer(address _to, uint256 _value) external returns (bool);
@@ -8,6 +9,8 @@ interface IToken {
 }
 
 contract Punk is ReentrancyGuard{
+	using SafeMath for uint256;
+
 	struct User {
 		uint256 id;
 		uint256 balance;
@@ -40,15 +43,20 @@ contract Punk is ReentrancyGuard{
 	uint256 public createTime;
 	IToken public punkToken;
 	uint256 public rewards;   // per day
-	uint256 public punkDecimals = 6;
-	uint256 public lpDecimals = 6;
+	uint256 public constant punkDecimals = 6;
+	uint256 public constant lpDecimals = 6;
 
 	uint256 public stakingTimes = 0;
 	
-	uint256 public oneDay = 24 * 3600;
+	uint256 public constant oneDay = 24 * 3600;
 	//uint256 public oneDay = 600;
 
 	address public owner;
+
+	event SetOwner(address indexed to);
+	event SetReward(uint256 value);
+	event RegisterToken(address indexed tokenAddr, uint256 weight);
+	event SetWeight(uint256 id, uint256 weight);
 
 
 	constructor(address ownerAddress, address punkAddr) public {
@@ -66,13 +74,15 @@ contract Punk is ReentrancyGuard{
 	    _;
 	}
 
-	function setOwner(address ownerAddress) public onlyOwner {
+	function setOwner(address ownerAddress) external onlyOwner {
 		require(ownerAddress != address(0), "owner can't be null");
 		owner = ownerAddress;
+		emit SetOwner(ownerAddress);
 	}
 
-	function setReward(uint256 reward) public onlyOwner {
+	function setReward(uint256 reward) external onlyOwner {
 		rewards = reward * (10 ** punkDecimals);
+		emit SetReward(reward);
 	}
 
 	function registerToken(address tokenAddr, uint256 weight) external onlyOwner {
@@ -96,31 +106,44 @@ contract Punk is ReentrancyGuard{
 		tokens[lastID] = token;
 		addrToTokens[tokenAddr] = lastID;
 
-		weights += weight;
+		//weights += weight;
+		weights = weights.add(weight);
+
+		emit RegisterToken(tokenAddr, weight);
 	}
 
 	function setWeight(uint256 id, uint256 weight) external onlyOwner {
-		require(tokens[id].id != 0, "token not exists");
+		LpToken memory tokenById = tokens[id];
+		require(tokenById.id != 0, "token not exists");
 		require(weight != 0, "weight can't be zero");
-		weights -= tokens[id].weight;
-		tokens[id].weight = weight;
-		weights += weight;
+		//weights -= tokenById.weight;
+		//tokenById.weight = weight;
+		//weights += weight;
+		weights = weights.sub(tokenById.weight);
+		tokenById.weight = weight;
+		weights = weights.add(weight);
+
+		emit SetWeight(id, weight);
 	}
 
 	function stake(uint256 id, uint256 amount) external nonReentrant {
+		LpToken memory tokenById = tokens[id];
 		require(amount > 0, "amount can't be smaller than 0");
-		require(tokens[id].id != 0, "token not exists");
+		require(tokenById.id != 0, "token not exists");
 
-		require(tokens[id].token.transferFrom(msg.sender, address(this), amount), "transferFrom failed");
+		require(tokenById.token.transferFrom(msg.sender, address(this), amount), "transferFrom failed");
 
 		if(tokens[id].users[msg.sender].id != 0) {   // user exists
-			tokens[id].users[msg.sender].lpBalance += (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals)); 
-			tokens[id].users[msg.sender].balance += amount;
-			tokens[id].users[msg.sender].lastTime = now;
+			User memory userByAddr = tokens[id].users[msg.sender];
+			//userByAddr.lpBalance += (userByAddr.balance * (now - userByAddr.lastTime) / (10 ** lpDecimals)); 
+			userByAddr.lpBalance = userByAddr.lpBalance.add(userByAddr.balance.mul(now.sub(userByAddr.lastTime)).div(10 ** lpDecimals));
+			//userByAddr.balance += amount;
+			userByAddr.balance = userByAddr.balance.add(amount);
+			userByAddr.lastTime = now;
 		} else {
-			tokens[id].lastID++;
+			tokenById.lastID++;
 			User memory user = User({
-				id: tokens[id].lastID,
+				id: tokenById.lastID,
 				balance: amount,
 				lastTime: now,
 				lpBalance: 0,
@@ -128,53 +151,69 @@ contract Punk is ReentrancyGuard{
 			});
 			tokens[id].users[msg.sender] = user;
 		}
-		tokens[id].lpBalance += (tokens[id].balance * (now - tokens[id].lastTime) / (10 ** lpDecimals));
-		tokens[id].lastTime = now;
-		tokens[id].balance += amount;
-
+		//tokenById.lpBalance += (tokenById.balance * (now - tokenById.lastTime) / (10 ** lpDecimals));
+		tokenById.lpBalance = tokenById.lpBalance.add(tokenById.balance.mul(now.sub(tokenById.lastTime)).div(10 ** lpDecimals));
+		tokenById.lastTime = now;
+		//tokenById.balance += amount;
+		tokenById.balance = tokenById.balance.add(amount);
 		stakingTimes++;
 	}
 
 	function withdraw(uint256 id, uint256 amount) external nonReentrant {
+		LpToken memory tokenById = tokens[id];
 		require(amount > 0, "amount can't be smaller than 0");
-		require(tokens[id].id != 0, "token not exists");
+		require(tokenById.id != 0, "token not exists");
 		require(tokens[id].users[msg.sender].id != 0, "user not exists");
-		require(tokens[id].users[msg.sender].balance > amount, "balance not enough");
+		require(tokens[id].users[msg.sender].balance >= amount, "balance not enough");
 
-		require(tokens[id].token.transfer(msg.sender, amount), "transfer failed");
+		require(tokenById.token.transfer(msg.sender, amount), "transfer failed");
 
-		tokens[id].users[msg.sender].lpBalance += (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals));
-		tokens[id].users[msg.sender].balance -= amount;
-		tokens[id].users[msg.sender].lastTime = now;
+		User memory userByAddr = tokens[id].users[msg.sender];
 
-		tokens[id].lpBalance += (tokens[id].balance * (now - tokens[id].lastTime) / (10 ** lpDecimals));
-		tokens[id].lastTime = now;
-		tokens[id].balance -= amount;
+		//userByAddr.lpBalance += (userByAddr.balance * (now - userByAddr.lastTime) / (10 ** lpDecimals));
+		userByAddr.lpBalance = userByAddr.lpBalance.add(userByAddr.balance.mul(now.sub(userByAddr.lastTime)).div(10 ** lpDecimals));
+		//userByAddr.balance -= amount;
+		userByAddr.balance = userByAddr.balance.sub(amount);
+		userByAddr.lastTime = now;
+
+		//tokenById.lpBalance += (tokenById.balance * (now - tokenById.lastTime) / (10 ** lpDecimals));
+		tokenById.lpBalance = tokenById.lpBalance.add(tokenById.balance.mul(now.sub(tokenById.lastTime)).div(10 ** lpDecimals));
+		tokenById.lastTime = now;
+		tokenById.balance -= amount;
 	}
 
 	function withdrawPunk(uint256 id) external nonReentrant {
-		require(tokens[id].id != 0, "token not exists");
+		LpToken memory tokenById = tokens[id];
+		require(tokenById.id != 0, "token not exists");
 		require(tokens[id].users[msg.sender].id != 0, "user not exists");
 		require(now - createTime < 4 * 12 * 30 * oneDay, "only mined by 4 years");
 		require(now - tokens[id].users[msg.sender].withdrawTime > oneDay, "withdraw once every day");
 
-		tokens[id].punkBalance += rewards * (now - tokens[id].punkTime) * tokens[id].weight / (weights * oneDay);
-		tokens[id].punkTime = now;
+		User memory userByAddr = tokens[id].users[msg.sender];
 
-		tokens[id].lpBalance += (tokens[id].balance * (now - tokens[id].lastTime) / (10 ** lpDecimals));
-		tokens[id].lastTime = now;
+		//tokenById.punkBalance += rewards * (now - tokenById.punkTime) * tokenById.weight / (weights * oneDay);
+		tokenById.punkBalance = tokenById.punkBalance.add(rewards.mul(now.sub(tokenById.punkTime)).mul(tokenById.weight).div(weights.mul(oneDay)));
+		tokenById.punkTime = now;
 
-		tokens[id].users[msg.sender].lpBalance += (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals));
-		tokens[id].users[msg.sender].lastTime = now;
-		tokens[id].users[msg.sender].withdrawTime = now;
+		//tokenById.lpBalance += (tokenById.balance * (now - tokenById.lastTime) / (10 ** lpDecimals));
+		tokenById.lpBalance = tokenById.lpBalance.add(tokenById.balance.mul(now.sub(tokenById.lastTime)).div(10 ** lpDecimals));
+		tokenById.lastTime = now;
 
-		uint256 amount = tokens[id].punkBalance * tokens[id].users[msg.sender].lpBalance / tokens[id].lpBalance;
+		//userByAddr.lpBalance += (userByAddr.balance * (now - userByAddr.lastTime) / (10 ** lpDecimals));
+		userByAddr.lpBalance = userByAddr.lpBalance.add(userByAddr.balance.mul(now.sub(userByAddr.lastTime)).div(10 ** lpDecimals));
+		userByAddr.lastTime = now;
+		userByAddr.withdrawTime = now;
+
+		//uint256 amount = tokenById.punkBalance * userByAddr.lpBalance / tokenById.lpBalance;
+		uint256 amount = tokenById.punkBalance.mul(userByAddr.lpBalance).div(tokenById.lpBalance);
 
 		require(punkToken.transfer(msg.sender, amount), "transfer failed");
 
-		tokens[id].punkBalance -= amount;
-		tokens[id].lpBalance -= tokens[id].users[msg.sender].lpBalance;
-		tokens[id].users[msg.sender].lpBalance = 0;
+		//tokenById.punkBalance -= amount;
+		tokenById.punkBalance = tokenById.punkBalance.sub(amount);
+		//tokenById.lpBalance -= userByAddr.lpBalance;
+		tokenById.lpBalance = tokenById.lpBalance.sub(userByAddr.lpBalance);
+		userByAddr.lpBalance = 0;
 	}
 
 	function global() public view returns(uint256, uint256, uint256, uint256) {
@@ -186,16 +225,18 @@ contract Punk is ReentrancyGuard{
 	}
 
 	function pool(uint256 id) public view returns(uint256, uint256, uint256, uint256, uint256) {
+		LpToken memory tokenById = tokens[id];
 		uint256 left = 0;
 		uint256 myPunk = 0;
-		if(tokens[id].id != 0) {
+		if(tokenById.id != 0) {
 			if(tokens[id].users[msg.sender].id != 0) {
+				User memory userByAddr = tokens[id].users[msg.sender];
 				// if(tokens[id].users[msg.sender].lpBalance != 0) {
-				uint256 extraUser = (tokens[id].users[msg.sender].balance * (now - tokens[id].users[msg.sender].lastTime) / (10 ** lpDecimals));
-				uint256 extraToken = (tokens[id].balance * (now - tokens[id].lastTime) / (10 ** lpDecimals));
+				uint256 extraUser = (userByAddr.balance * (now - userByAddr.lastTime) / (10 ** lpDecimals));
+				uint256 extraToken = (tokenById.balance * (now - tokenById.lastTime) / (10 ** lpDecimals));
 
-				if(tokens[id].lpBalance + extraToken > 0) {
-					myPunk = (tokens[id].punkBalance + rewards * (now - tokens[id].punkTime) * tokens[id].weight / (weights * oneDay)) * (tokens[id].users[msg.sender].lpBalance + extraUser) / (tokens[id].lpBalance + extraToken);
+				if(tokenById.lpBalance + extraToken > 0) {
+					myPunk = (tokenById.punkBalance + rewards * (now - tokenById.punkTime) * tokenById.weight / (weights * oneDay)) * (userByAddr.lpBalance + extraUser) / (tokenById.lpBalance + extraToken);
 				}
 				// }
 			}
@@ -205,6 +246,6 @@ contract Punk is ReentrancyGuard{
 		} else {
 			left = oneDay - (now - tokens[id].users[msg.sender].withdrawTime);
 		}
-		return (rewards * tokens[id].weight / weights, tokens[id].balance, myPunk, tokens[id].users[msg.sender].balance, left);
+		return (rewards * tokenById.weight / weights, tokenById.balance, myPunk, tokens[id].users[msg.sender].balance, left);
 	}
 }
